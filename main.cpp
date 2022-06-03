@@ -4,16 +4,17 @@
 #include <stdio.h>
 #include "mpdev/mpdev.h"
 #include "lsl/lsl_cpp.h"
+#include <algorithm>
+#include <conio.h>
 
 using namespace std;
+
+//char* getCmdOption(char **, char **, const std::string&);
+//bool cmdOptionExists(char**, char**, const std::string&);
 
 int main(int argc, char *argv[])
 {
     QCoreApplication a(argc, argv);
-    // ofstream myfile;
-    // myfile.open ("example.txt");
-    // myfile << "Hello World.\n";
-    // myfile.close();
 
     BOOL analogCH[] = {true, false, false, false};
     uint nChan = 0;
@@ -30,20 +31,77 @@ int main(int argc, char *argv[])
 
     MPRETURNCODE retval;
 
+    cout << "Connecting to MP device...";
     retval = connectMPDev(MP36, MPUSB, "auto");
-    cout << "connectMPDev returned " << retval << "\n";
+    if(retval != MPSUCCESS){
+        cout << "\n";
+        cout << "Program failed to connect to MP Device\n";
+        cout << "connectMPDev returned with " << retval << " as a return code.\n";
+        cout << "Disconnecting...\n";
+        disconnectMPDev();
+        cout << "Exit\n" << endl;
+        return 0;
+    } else {
+        cout << "[Done]\n";
+    }
 
+    cout << "Setting active analog channels...";
     retval = setAcqChannels(analogCH);
-    cout << "setAcqChannels returned " << retval << "\n";
+    if(retval != MPSUCCESS){
+        cout << "\n";
+        cout << "Program failed to setup active analog channels\n";
+        cout << "setAcqChannels returned with " << retval << " as a return code.\n";
+        cout << "Disconnecting...\n";
+        disconnectMPDev();
+        cout << "Exit\n" << endl;
+        return 0;
+    } else {
+        cout << "[Done]\n";
+    }
 
+    cout << "Setting sample rate at " << sampleRate << " ms per sample...";
     retval = setSampleRate(sampleRate);
-    cout << "setSampleRate returned " << retval << "\n";
+    if(retval != MPSUCCESS){
+        cout << "\n";
+        cout << "Program failed to setup sample rate\n";
+        cout << "setSampleRate returned with " << retval << " as a return code.\n";
+        cout << "Disconnecting...\n";
+        disconnectMPDev();
+        cout << "Exit\n" << endl;
+        return 0;
+    } else {
+        cout << "[Done]\n";
+    }
 
+    cout << "Starting acquisition daemon...";
     retval =  startMPAcqDaemon();
-    cout << "startMPAcqDaemon returned " << retval << "\n";
+    if(retval != MPSUCCESS){
+        cout << "\n";
+        cout << "Program failed to start acquisition daemon\n";
+        cout << "startMPAcqDaemon returned with " << retval << " as a return code.\n";
+        cout << "Disconnecting...\n";
+        stopAcquisition();
+        disconnectMPDev();
+        cout << "Exit\n" << endl;
+        return 0;
+    } else {
+        cout << "[Done]\n";
+    }
 
+    cout << "Starting acquisition...";
     retval = startAcquisition();
-    cout << "startAcquisition returned " << retval << "\n";
+    if(retval != MPSUCCESS){
+        cout << "\n";
+        cout << "Program failed to start acquisition\n";
+        cout << "startAcquisition returned with " << retval << " as a return code.\n";
+        cout << "Disconnecting...\n";
+        stopAcquisition();
+        disconnectMPDev();
+        cout << "Exit\n" << endl;
+        return 0;
+    } else {
+        cout << "[Done]\n";
+    }
 
     // initialize MP buffer
     uint buffer_len_ms = 10; // buffer length in ms
@@ -58,7 +116,7 @@ int main(int argc, char *argv[])
 
     lsl::xml_element channels = data_info.desc().append_child("channels");
 
-    // convert the eeg mask to a bits array for ch labelling
+    // set channel labels for LSL stream
     char ch_name[50];
     for (uint k = 0;  k < (sizeof(analogCH)/sizeof(*analogCH)); k++) {
         if(analogCH[k]==true){
@@ -71,13 +129,19 @@ int main(int argc, char *argv[])
 
     }
 
+    // push data to LSL outlet
+    cout << "Pushing data to LSL outlet...\n";
+    cout << "Press q to stop\n";
     bool stop = false;
     double start_time = lsl::local_clock();
     double elapsed_time = 0;
     uint global_nSample = 0;
-    double duration = 60;
-    while(elapsed_time < duration){
-        retval = receiveMPData(buffer,buffer_len, &valuesRead);
+    double duration = 120;
+    int isKey_press = 0;
+    int key_press;
+    bool is_waiting_quit_confirmation = false;
+    while(!stop){
+        receiveMPData(buffer,buffer_len, &valuesRead);
         double now = lsl::local_clock();
         uint nSample = static_cast<unsigned int>(valuesRead / nChan);
         global_nSample += nSample;
@@ -89,22 +153,60 @@ int main(int argc, char *argv[])
         }
         data_outlet.push_chunk(send_buffer, now);
         elapsed_time = lsl::local_clock() - start_time;
+        if (elapsed_time >= duration){
+            stop = true;
+        }
+
+        isKey_press = _kbhit();
+
+        if (isKey_press){
+            key_press = _getch();
+            //cout << "key_press " << key_press << "\n";
+            if (is_waiting_quit_confirmation){
+                if (key_press == 121){
+                    stop = true;
+                }
+                if (key_press == 110){
+                    is_waiting_quit_confirmation = false;
+                    cout << "Pushing data to LSL outlet...\n";
+                    cout << "Press q to stop\n";
+                }
+            } else {
+                if (key_press == 113){
+                    is_waiting_quit_confirmation = true;
+                    cout << "Do you really want to stop acquisition? [y/n]\n";
+                }
+            }
+        }
     }
-    cout << "read " << global_nSample << " (" << duration*sampleRate*1000 << ") " << " in " << elapsed_time << "s\n";
-    cout << "estimated sampling frequency " << global_nSample/elapsed_time << "Hz\n";
 
-
-
-    retval = stopAcquisition();
-    cout << "stopAcquisition returned " << retval << "\n";
-
+    stopAcquisition();
     disconnectMPDev();
+    cout << "Acquisition stopped\n";
 
-    cout << "press ctrl+c to quit\n";
+    cout << "Read " << global_nSample << " samples in " << elapsed_time << " s\n";
+    //cout << "Read " << global_nSample << " (" << elapsed_time*sampleRate*1000 << ") samples in " << elapsed_time << " s\n";
+    cout << "Estimated sampling frequency " << global_nSample/elapsed_time << "Hz\n";
+
+    cout << "Press ctrl+c to quit\n";
     return a.exec();
 }
 
 
+/*
+char* getCmdOption(char ** begin, char ** end, const std::string & option)
+{
+    char ** itr = std::find(begin, end, option);
+    if (itr != end && ++itr != end)
+    {
+        return *itr;
+    }
+    return 0;
+}
 
-
+bool cmdOptionExists(char** begin, char** end, const std::string& option)
+{
+    return std::find(begin, end, option) != end;
+}
+*/
 
