@@ -15,7 +15,7 @@ using namespace std;
 int main(int argc, char *argv[])
 {
     QCoreApplication a(argc, argv);
-
+    MPRETURNCODE retval;
     BOOL analogCH[] = {true, false, false, false};
     uint nChan = 0;
     // count number of active channels
@@ -26,10 +26,6 @@ int main(int argc, char *argv[])
     }
 
     const double sampleRate = 1.0; // sample rate in ms
-
-    cout << "Hello World!\n";
-
-    MPRETURNCODE retval;
 
     cout << "Connecting to MP device...";
     retval = connectMPDev(MP36, MPUSB, "auto");
